@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <title>MUN Canlı Oylama Sistemi</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/12.9.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore-compat.js"></script>
+</head>
+
+<body class="bg-slate-50" background="dostum.jpg">
+<div id="root"></div>
+
+<script type="text/babel">
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA4hp_X1DTUCxjmIEqAJuhmzHKC9MfpdME",
+  authDomain: "aalmun-2c505.firebaseapp.com",
+  projectId: "aalmun-2c505",
+  storageBucket: "aalmun-2c505.firebasestorage.app",
+  messagingSenderId: "664039656305",
+  appId: "1:664039656305:web:a083dd8a5ef9dc7b1a44d0"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+const { useState, useEffect } = React;
+const ADMIN_PASSWORD = "Atlas";
+
+function MunApp() {
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState(false);
+
+  const [hasVoted, setHasVoted] = useState(false);
+  const [delegateOfDay, setDelegateOfDay] = useState("Henüz seçilmedi");
+  const [votingOpen, setVotingOpen] = useState(false);
+
+  const [options, setOptions] = useState([
+    { id: 1, text: "Option 1", count: 0 },
+    { id: 2, text: "Option 2", count: 0 },
+    { id: 3, text: "Option 3", count: 0 }
+  ]);
+
+  // 🔥 İlk yükleme + realtime dinleme
+  useEffect(() => {
+
+    const voted = localStorage.getItem("mun_has_voted");
+    if (voted === "true") setHasVoted(true);
+
+    // SETTINGS dinleme
+    const settingsUnsub = db.collection("settings").doc("config")
+      .onSnapshot(doc => {
+        if (doc.exists) {
+          const data = doc.data();
+          setVotingOpen(data.votingOpen ?? false);
+          setDelegateOfDay(data.delegateOfDay ?? "Henüz seçilmedi");
+
+          if (data.options) {
+            setOptions(prev =>
+              prev.map(o => {
+                const found = data.options.find(x => x.id === o.id);
+                return found ? { ...o, text: found.text } : o;
+              })
+            );
+          }
+        }
+      });
+
+    // VOTES dinleme
+    const votesUnsub = db.collection("votes")
+      .onSnapshot(snapshot => {
+        setOptions(prev =>
+          prev.map(o => {
+            const doc = snapshot.docs.find(d => d.id === String(o.id));
+            return doc ? { ...o, count: doc.data().count || 0 } : o;
+          })
+        );
+      });
+
+    return () => {
+      settingsUnsub();
+      votesUnsub();
+    };
+
+  }, []);
+
+  // 🔥 OY VERME
+  async function vote(id) {
+    if (!votingOpen || hasVoted) return;
+
+    const ref = db.collection("votes").doc(String(id));
+
+    await ref.set({
+      count: firebase.firestore.FieldValue.increment(1)
+    }, { merge: true });
+
+    localStorage.setItem("mun_has_voted", "true");
+    setHasVoted(true);
+  }
+
+  // 🔥 SETTINGS GÜNCELLEME
+  async function updateSettings(newData) {
+    await db.collection("settings").doc("config").set(newData, { merge: true });
+  }
+
+  function resetVotes() {
+    options.forEach(o => {
+      db.collection("votes").doc(String(o.id)).set({ count: 0 });
+    });
+    localStorage.removeItem("mun_has_voted");
+    setHasVoted(false);
+  }
+
+  function changeOptionText(id, text) {
+    const updated = options.map(o =>
+      o.id === id ? { ...o, text } : o
+    );
+    setOptions(updated);
+
+    updateSettings({
+      options: updated.map(o => ({ id: o.id, text: o.text }))
+    });
+  }
+
+  function openAdminLogin() {
+    setPassword("");
+    setLoginError(false);
+    setShowLogin(true);
+  }
+
+  function handleLogin() {
+    if (password === ADMIN_PASSWORD) {
+      setIsAdmin(true);
+      setShowLogin(false);
+    } else {
+      setLoginError(true);
+    }
+  }
+
+  function logout() {
+    setIsAdmin(false);
+  }
+
+  return (
+    <div className="min-h-screen p-6 text-white">
+      <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
+
+        {/* HEADER */}
+        <div className="col-span-2 flex items-center justify-between backdrop-blur p-4 rounded-2xl shadow">
+          <img src="logo.jpeg" className="h-12 object-contain" />
+          <h2 className="text-lg font-semibold mb-3">A A L M U N 2 6</h2>
+
+          {!isAdmin ? (
+            <button onClick={openAdminLogin} className="px-4 py-2 rounded-xl backdrop-blur text-white">
+              W E L C O M E
+            </button>
+          ) : (
+            <button onClick={logout} className="px-4 py-2 rounded-xl bg-gray-700 text-white">
+              Admin Çıkış
+            </button>
+          )}
+        </div>
+
+        {/* GÜNÜN DELEGESİ */}
+        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
+          <h2 className="text-xl font-semibold mb-4">S C H E D U L E | D A I L Y - D E L E G A T E</h2>
+                    <div className="flex gap-4 overflow-x-auto pb-2">
+            <img src="1.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
+            <img src="12.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
+            <img src="WhatsApp Image 2026-02-11 at 00.09.17.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-lg font-medium text-slate-700">{delegateOfDay}</p>
+
+            {isAdmin && (
+              <input
+                type="text"
+                value={delegateOfDay}
+                onChange={e => {
+                  setDelegateOfDay(e.target.value);
+                  updateSettings({ delegateOfDay: e.target.value });
+                }}
+                className="border rounded-xl px-3 py-2"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* OYLAMA */}
+        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
+          <h2 className="text-xl font-semibold mb-4">C A N L I - O Y L A M A</h2>
+
+          <div className="mb-3 flex items-center gap-3">
+            <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
+              votingOpen ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+            }`}>
+              {votingOpen ? "Voting is Open" : "Voting is Closed"}
+            </span>
+
+            {!isAdmin && hasVoted && (
+              <span className="text-sm text-blue-700 font-medium">
+                Bu cihazdan oy kullanıldı
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            {options.map(o => (
+              <div key={o.id} className="flex items-center justify-between border rounded-xl p-3">
+                <div>
+                  <p className="font-medium">{o.text}</p>
+                  <p className="text-sm text-gray-500">Votes: {o.count}</p>
+                </div>
+
+                {!isAdmin && (
+                  <button
+                    onClick={() => vote(o.id)}
+                    disabled={!votingOpen || hasVoted}
+                    className="px-4 py-2 rounded-xl bg-blue-600 text-white disabled:opacity-40"
+                  >
+                    Vote
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ADMIN PANEL */}
+        {isAdmin && (
+          <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
+            <h2 className="text-xl font-semibold mb-4">Admin Panel</h2>
+
+            <div className="flex flex-wrap gap-3 mb-6">
+              <button onClick={() => updateSettings({ votingOpen: true })} className="px-4 py-2 rounded-xl bg-green-600 text-white">Open Voting</button>
+              <button onClick={() => updateSettings({ votingOpen: false })} className="px-4 py-2 rounded-xl bg-red-600 text-white">Close Voting</button>
+              <button onClick={resetVotes} className="px-4 py-2 rounded-xl bg-gray-800 text-white">Reset Votes</button>
+            </div>
+
+            <h3 className="font-semibold mb-3">Edit Voting Options</h3>
+
+            <div className="space-y-3">
+              {options.map(o => (
+                <div key={o.id} className="flex gap-3">
+                  <input
+                    value={o.text}
+                    onChange={e => changeOptionText(o.id, e.target.value)}
+                    className="flex-1 border rounded-xl px-3 py-2"
+                  />
+                  <span className="px-3 py-2 rounded-xl bg-slate-100 text-sm">
+                    {o.count}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {showLogin && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow">
+            <h3 className="text-lg font-semibold mb-4">Admin Girişi</h3>
+
+            <input
+              type="password"
+              placeholder="Şifre"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full border rounded-xl px-3 py-2 mb-2"
+            />
+
+            {loginError && (
+              <p className="text-sm text-red-600 mb-2">Şifre yanlış</p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowLogin(false)} className="px-4 py-2 rounded-xl bg-gray-200">İptal</button>
+              <button onClick={handleLogin} className="px-4 py-2 rounded-xl bg-black text-white">Giriş</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<MunApp />);
+
+</script>
+
+</body>
+</html>
