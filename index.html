@@ -10,7 +10,6 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/12.9.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore-compat.js"></script>
 </head>
@@ -52,19 +51,24 @@ function MunApp() {
     { id: 3, text: "Option 3", count: 0 }
   ]);
 
-  // 🔥 İlk yükleme + realtime dinleme
   useEffect(() => {
-
-    const voted = localStorage.getItem("mun_has_voted");
-    if (voted === "true") setHasVoted(true);
-
-    // SETTINGS dinleme
+    // SETTINGS dinleme (Oturum kontrolü burada yapılıyor)
     const settingsUnsub = db.collection("settings").doc("config")
       .onSnapshot(doc => {
         if (doc.exists) {
           const data = doc.data();
           setVotingOpen(data.votingOpen ?? false);
           setDelegateOfDay(data.delegateOfDay ?? "Henüz seçilmedi");
+
+          // 🔥 GLOBAL SIFIRLAMA KONTROLÜ
+          const savedSession = localStorage.getItem("mun_session_id");
+          if (data.currentSessionId && data.currentSessionId !== savedSession) {
+            // Eğer DB'deki session ID bendekinden farklıysa, oy verme hakkını geri ver
+            localStorage.removeItem("mun_has_voted");
+            setHasVoted(false);
+          } else if (localStorage.getItem("mun_has_voted") === "true") {
+            setHasVoted(true);
+          }
 
           if (data.options) {
             setOptions(prev =>
@@ -95,31 +99,45 @@ function MunApp() {
 
   }, []);
 
-  // 🔥 OY VERME
   async function vote(id) {
     if (!votingOpen || hasVoted) return;
 
-    const ref = db.collection("votes").doc(String(id));
+    // Önce güncel session ID'yi alalım
+    const configDoc = await db.collection("settings").doc("config").get();
+    const currentId = configDoc.data()?.currentSessionId || "initial";
 
+    const ref = db.collection("votes").doc(String(id));
     await ref.set({
       count: firebase.firestore.FieldValue.increment(1)
     }, { merge: true });
 
     localStorage.setItem("mun_has_voted", "true");
+    localStorage.setItem("mun_session_id", currentId);
     setHasVoted(true);
   }
 
-  // 🔥 SETTINGS GÜNCELLEME
   async function updateSettings(newData) {
     await db.collection("settings").doc("config").set(newData, { merge: true });
   }
 
-  function resetVotes() {
+  async function resetVotes() {
+    if (!confirm("TÜM OYLAR SIFIRLANACAK ve herkese tekrar oy hakkı verilecek. Emin misiniz?")) return;
+
+    // 1. Oyları DB'de sıfırla
     options.forEach(o => {
       db.collection("votes").doc(String(o.id)).set({ count: 0 });
     });
+
+    // 2. Yeni Session ID oluştur (bu tüm kullanıcıların engelini kaldırır)
+    const newSessionId = Date.now().toString();
+    await updateSettings({ currentSessionId: newSessionId });
+
+    // 3. Kendi state'ini güncelle
     localStorage.removeItem("mun_has_voted");
+    localStorage.removeItem("mun_session_id");
     setHasVoted(false);
+    
+    alert("Sistem başarıyla sıfırlandı!");
   }
 
   function changeOptionText(id, text) {
@@ -133,12 +151,6 @@ function MunApp() {
     });
   }
 
-  function openAdminLogin() {
-    setPassword("");
-    setLoginError(false);
-    setShowLogin(true);
-  }
-
   function handleLogin() {
     if (password === ADMIN_PASSWORD) {
       setIsAdmin(true);
@@ -146,10 +158,6 @@ function MunApp() {
     } else {
       setLoginError(true);
     }
-  }
-
-  function logout() {
-    setIsAdmin(false);
   }
 
   return (
@@ -162,27 +170,26 @@ function MunApp() {
           <h2 className="text-lg font-semibold mb-3">A A L M U N 2 6</h2>
 
           {!isAdmin ? (
-            <button onClick={openAdminLogin} className="px-4 py-2 rounded-xl backdrop-blur text-white">
+            <button onClick={() => { setPassword(""); setLoginError(false); setShowLogin(true); }} className="px-4 py-2 rounded-xl backdrop-blur text-white">
               W E L C O M E
             </button>
           ) : (
-            <button onClick={logout} className="px-4 py-2 rounded-xl bg-gray-700 text-white">
+            <button onClick={() => setIsAdmin(false)} className="px-4 py-2 rounded-xl bg-gray-700 text-white">
               Admin Çıkış
             </button>
           )}
         </div>
 
         {/* GÜNÜN DELEGESİ */}
-        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
-          <h2 className="text-xl font-semibold mb-4">S C H E D U L E | D A I L Y - D E L E G A T E</h2>
-                    <div className="flex gap-4 overflow-x-auto pb-2">
+        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow text-slate-800">
+          <h2 className="text-xl font-semibold mb-4 text-white">S C H E D U L E | D A I L Y - D E L E G A T E</h2>
+          <div className="flex gap-4 overflow-x-auto pb-2">
             <img src="1.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
             <img src="12.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
             <img src="WhatsApp Image 2026-02-11 at 00.09.17.jpeg" className="h-64 rounded-xl flex-shrink-0 object-contain bg-white/40 p-2" />
           </div>
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-lg font-medium text-slate-700">{delegateOfDay}</p>
-
+          <div className="flex items-center justify-between gap-4 mt-4">
+            <p className="text-lg font-medium">{delegateOfDay}</p>
             {isAdmin && (
               <input
                 type="text"
@@ -191,15 +198,15 @@ function MunApp() {
                   setDelegateOfDay(e.target.value);
                   updateSettings({ delegateOfDay: e.target.value });
                 }}
-                className="border rounded-xl px-3 py-2"
+                className="border rounded-xl px-3 py-2 text-black"
               />
             )}
           </div>
         </div>
 
         {/* OYLAMA */}
-        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
-          <h2 className="text-xl font-semibold mb-4">C A N L I - O Y L A M A</h2>
+        <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow text-slate-800">
+          <h2 className="text-xl font-semibold mb-4 text-white">C A N L I - O Y L A M A</h2>
 
           <div className="mb-3 flex items-center gap-3">
             <span className={`text-sm font-semibold px-3 py-1 rounded-full ${
@@ -210,17 +217,17 @@ function MunApp() {
 
             {!isAdmin && hasVoted && (
               <span className="text-sm text-blue-700 font-medium">
-                Bu cihazdan oy kullanıldı
+                Bu tur için oy kullandınız
               </span>
             )}
           </div>
 
           <div className="space-y-3">
             {options.map(o => (
-              <div key={o.id} className="flex items-center justify-between border rounded-xl p-3">
+              <div key={o.id} className="flex items-center justify-between border border-white/40 rounded-xl p-3 bg-white/20">
                 <div>
-                  <p className="font-medium">{o.text}</p>
-                  <p className="text-sm text-gray-500">Votes: {o.count}</p>
+                  <p className="font-medium text-slate-900">{o.text}</p>
+                  <p className="text-sm text-gray-700">Votes: {o.count}</p>
                 </div>
 
                 {!isAdmin && (
@@ -239,41 +246,34 @@ function MunApp() {
 
         {/* ADMIN PANEL */}
         {isAdmin && (
-          <div className="col-span-2 bg-white/60 backdrop-blur-sm p-4 rounded-2xl shadow">
+          <div className="col-span-2 bg-white/80 backdrop-blur-sm p-4 rounded-2xl shadow text-slate-800">
             <h2 className="text-xl font-semibold mb-4">Admin Panel</h2>
-
             <div className="flex flex-wrap gap-3 mb-6">
               <button onClick={() => updateSettings({ votingOpen: true })} className="px-4 py-2 rounded-xl bg-green-600 text-white">Open Voting</button>
               <button onClick={() => updateSettings({ votingOpen: false })} className="px-4 py-2 rounded-xl bg-red-600 text-white">Close Voting</button>
-              <button onClick={resetVotes} className="px-4 py-2 rounded-xl bg-gray-800 text-white">Reset Votes</button>
+              <button onClick={resetVotes} className="px-4 py-2 rounded-xl bg-gray-800 text-white">Reset Votes & Clear User Cache</button>
             </div>
-
             <h3 className="font-semibold mb-3">Edit Voting Options</h3>
-
             <div className="space-y-3">
               {options.map(o => (
                 <div key={o.id} className="flex gap-3">
                   <input
                     value={o.text}
                     onChange={e => changeOptionText(o.id, e.target.value)}
-                    className="flex-1 border rounded-xl px-3 py-2"
+                    className="flex-1 border rounded-xl px-3 py-2 text-black"
                   />
-                  <span className="px-3 py-2 rounded-xl bg-slate-100 text-sm">
-                    {o.count}
-                  </span>
+                  <span className="px-3 py-2 rounded-xl bg-slate-100 text-sm">{o.count}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
-
       </div>
 
       {showLogin && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow text-slate-800">
             <h3 className="text-lg font-semibold mb-4">Admin Girişi</h3>
-
             <input
               type="password"
               placeholder="Şifre"
@@ -281,11 +281,7 @@ function MunApp() {
               onChange={e => setPassword(e.target.value)}
               className="w-full border rounded-xl px-3 py-2 mb-2"
             />
-
-            {loginError && (
-              <p className="text-sm text-red-600 mb-2">Şifre yanlış</p>
-            )}
-
+            {loginError && <p className="text-sm text-red-600 mb-2">Şifre yanlış</p>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowLogin(false)} className="px-4 py-2 rounded-xl bg-gray-200">İptal</button>
               <button onClick={handleLogin} className="px-4 py-2 rounded-xl bg-black text-white">Giriş</button>
@@ -293,7 +289,6 @@ function MunApp() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
@@ -302,6 +297,5 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<MunApp />);
 
 </script>
-
 </body>
 </html>
